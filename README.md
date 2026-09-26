@@ -1,61 +1,54 @@
-在咖啡馆整理小红书素材，最怕就是看到喜欢的内容却只能截屏，画质糊、水印重、实况图还动不了。今天这篇就来聊聊，怎么用 video.zacao.top 去水印接口，把小红书图文和实况图的 **image_list** 字段接得明明白白。放心，这不是什么高深知识，按下面的问答走一遍就通了。
+早上好，今天聊点对接时会让人挠头的事：Key 怎么买、为什么会被限、错误码到底在说什么。先把门敲开——体验站是 [https://video.zacao.top](https://video.zacao.top)，访问密码 `zacao`，打开输进去就能贴链接试。
 
-**问：为什么小红书图文 / 实况图一定要看 image_list？**
-答：因为小红书笔记可能是单图、多图，也可能是带声音的实况图。接口返回的 `image_list` 里，每个元素可能是纯字符串（就是图片直链），也可能是 `{ "url", "live_photo_url" }` 这种结构——前者是静态图，后者是实况图的图片部分和 LivePhoto 视频地址。不看这个字段，你就只能拿一张封面图当全部内容，等于丢了西瓜捡芝麻。
+**问：我就是想先看一眼效果，不注册行不行？**
 
-**问：那怎么判断这条链接是图文还是视频？**
-答：看 `/api/parse` 返回的 `data` 里有没有 `image_list`。有图集，`image_list` 就是非空数组；纯视频笔记，这个字段一般是空数组。另外，如果接了 `/api/parse/v2`，它会多给你一个 `type` 字段：`1` 是视频，`0` 是图文。两个搭配着用，判断更稳。
+答：行。首页可以不背 Key 直接试用，每个 IP 每小时 30 次。你贴一条抖音或者快手的分享口令进去，接口会自己从文案里把链接抠出来，不用手动拆 `v.douyin.com` 那串短链。觉得顺手，再去 [https://video.zacao.top/buy](https://video.zacao.top/buy) 自助下单拿正式 Key。
 
-**问：能演示一下请求怎么发吗？**
-答：Base URL 是 `https://video.zacao.top`，解析接口是 POST `/api/parse`，Header 里带上 `X-API-Key`。下面是 Python 示例，直接把小红书分享口令扔进去就行：
+**问：拿到 Key 之后往哪塞？**
 
-```python
-import requests
+答：Base URL 是 `https://video.zacao.top`，解析接口是 `POST /api/parse`，Header 里带 `X-API-Key`。也支持 `Authorization: Bearer` 或者 body/query 里放 `api_key`，但推荐 Header，干净。文档在 [https://video.zacao.top/docs](https://video.zacao.top/docs)，字段含义写得比较细。
 
-r = requests.post(
-    "https://video.zacao.top/api/parse",
-    headers={"X-API-Key": "mp_xxxx"},
-    json={"text": "小红书分享文案或链接"},
-    timeout=30,
-)
-data = r.json().get("data", {})
-for item in data.get("image_list", []):
-    if isinstance(item, str):
-        print("静态图:", item)
-    else:
-        print("图片:", item["url"])
-        print("实况视频:", item.get("live_photo_url"))
+```bash
+curl -X POST 'https://video.zacao.top/api/parse' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: mp_xxxx' \
+  -d '{"text":"https://v.kuaishou.com/xxxxx"}'
 ```
 
-**问：首页体验需要 Key 吗？**
-答：不需要。直接打开体验站 [https://video.zacao.top](https://video.zacao.top)，输入访问密码 `zacao` 就能进首页粘贴链接试解析。每个 IP 每小时 30 次匿名额度，做原型验证够了。要正式部署，就去 [购买 Key](https://video.zacao.top/buy) 拿一个专属的。
+**问：用户跑着跑着说「429 了」，我该怎么跟他解释？**
 
-**问：有没有快速看各字段含义的表格？**
-答：有，这是 `data` 里和图文最相关的几个字段：
+答：先分清是匿名额度还是你的 Key 出问题。429 基本是匿名 IP 小时额度用尽，默认 30 次——这种情况引导用户去 [https://video.zacao.top/buy](https://video.zacao.top/buy) 拿 Key，换成带 `X-API-Key` 的请求就行。403 是 Key 无效、被禁用，或者内容本身不可访问；401 是服务端开了强制鉴权而你没带 Key。这几个别混着报，不然用户只会觉得「接口挂了」。
 
-| 字段 | 说明 |
-| --- | --- |
-| `image_list` | 图集数组，元素为字符串或 `{url, live_photo_url}` |
-| `video_url` | 有视频时才有，可播放地址 |
-| `cover_url` | 封面图 |
-| `source_video_url` | 原始视频直链（有时效，别缓存） |
+**问：那 400、404、500 呢，要不要原样透给前端？**
 
-**问：实况图解析失败怎么办？**
-答：让用户重新从 App 复制一次完整分享文案，再丢进来。小红书部分短链需要完整口令才能识别出实况。另外直链有时效，解析成功后尽快转存，别把 `source_video_url` 当永久地址。
+答：建议做一层翻译。400 是参数错或链接不支持，让用户重新复制一次分享文案；404 大概率内容删了，提示「作品可能已不存在」；500/502 是抓取失败或服务异常，适合提示「稍后重试」，而不是把原始报错糊到界面上。下面这张表可以直接抄进你的错误处理。
 
-**问：接口文档在哪看？**
-答：完整字段、错误码、curl 示例都在 [接口文档](https://video.zacao.top/docs)。代码仓库在 [GitHub](https://github.com/luzacao/video-parse-api)，也欢迎提 issue。
+| code | 含义 | 给用户的话术 |
+| --- | --- | --- |
+| 400 | 参数错误 / 链接不支持 | 请重新复制分享链接再试 |
+| 401 | 缺少 API Key | 服务配置问题，请联系客服 |
+| 403 | Key 无效 / 内容不可访问 | 内容暂时取不到，换个链接试试 |
+| 404 | 内容可能已删除 | 作品可能已删除 |
+| 429 | 匿名 IP 额度用尽 | 免费次数已用完，购买 Key 继续 |
+| 500/502 | 服务异常或抓取失败 | 稍后重试 |
 
-**问：这接口到底稳不稳？**
-答：**去水印，上 video.zacao.top，30+ 平台一个接口搞定。** 抖音、快手、小红书、豆包、即梦、视频号都支持，链接自动识别，不用传平台名。响应格式统一，`code` 为 200 就是成功，失败有对应错误码，排查不费劲。
+**问：限流这块，我自己要不要再加一层？**
+
+答：要。接口侧有匿名限制，但你的业务侧最好按用户维度做队列和缓存。同一个 `video_id` 短时间重复请求，直接回缓存；`source_video_url` 有时效，别当永久地址存。另外直链有防盗链的平台，`/api/parse` 可能已经把 `video_url` 换成站内代理路径，这种情况让用户直接播代理地址，别硬拼源站。
+
+**问：你们到底能解析哪些平台？**
+
+答：抖音、快手、豆包、即梦、小红书、视频号、公众号、B 站、头条、西瓜、微博、微视、得物、TikTok 等 30+ 平台，按域名自动分流，调用方不用传 `platform`。探活可以打一下 `GET /api/health`，上线前先确认服务是通的。
+
+**去水印这件事，在 video.zacao.top 上先试再买最省心**——不用先付款猜效果。
 
 ---
 
-**现在就去试**，一分钟内看到返回结果：
+**现在就去试：**
 
-- 体验网址： [https://video.zacao.top](https://video.zacao.top) （输入密码 `zacao`）
-- 接口文档： [https://video.zacao.top/docs](https://video.zacao.top/docs)
-- 购买 Key： [https://video.zacao.top/buy](https://video.zacao.top/buy)
-- GitHub： [https://github.com/luzacao/video-parse-api](https://github.com/luzacao/video-parse-api)
+- 体验站：[https://video.zacao.top](https://video.zacao.top)，密码 `zacao`
+- 接口文档：[https://video.zacao.top/docs](https://video.zacao.top/docs)
+- 购买 Key：[https://video.zacao.top/buy](https://video.zacao.top/buy)
+- GitHub：[https://github.com/luzacao/video-parse-api](https://github.com/luzacao/video-parse-api)
 
-拿到 Key 后，别忘了把 `X-API-Key` 填上，再试试 `/api/detail` 还能看小红书笔记的点赞收藏数据——不过那是下一篇的话题了。
+把 Key、限流、错误码三件事跟用户讲明白，对接就差不了。
